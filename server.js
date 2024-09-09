@@ -35,7 +35,7 @@ app.post(
 
     // Handle the event
     switch (event.type) {
-      case 'checkout_session_completed':
+      case 'checkout.session.completed': 
         const customerEmail = event.data.object.customer_details.email;
         const todayDate = new Date();
         const day = todayDate.getDate();
