@@ -1,22 +1,17 @@
 {
-  "name": "stripe_node_webhook",
+  "name": "nodejs-app",
   "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "description": "A minimal Node.js web application.",
+  "main": "app.js",
+  "author": "cassiorosso",
+  "license": "MIT",
   "dependencies": {
-    "body-parser": "^1.20.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "morgan": "^1.10.0",
+    "dotenv": "^16.4.5",
     "stripe": "^16.10.0",
-    "axios": "^1.7.7"
+    "axios": "^1.7.7",
+  },
+  "scripts": {
+    "start": "node server.js"
   }
 }
