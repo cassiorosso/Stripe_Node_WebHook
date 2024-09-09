@@ -20,50 +20,42 @@ app.get('/', (req, res) => res.send("Stripe Webhook API is up!"));
 app.post(
   '/webhook',
   // Stripe requires the raw body to construct the event
-  express.raw({type: 'application/json'}),
+  express.raw({ type: 'application/json' }),
   async (request, response) => {
     const sig = request.headers['stripe-signature'];
 
     let event;
 
-  try {
-    event = stripe.webhooks.constructEvent(request.body, sig, endpointSecret);
-  }
-  catch (err) {
-    response.status(400).send(`Webhook Error: ${err.message}`);
-  }
+    try {
+      event = stripe.webhooks.constructEvent(request.body, sig, endpointSecret);
+    }
+    catch (err) {
+      response.status(400).send(`Webhook Error: ${err.message}`);
+    }
 
-  // Handle the event
-  switch (event.type) {
-    case 'payment_intent.succeeded':
-      const paymentIntent = event.data.object;
-      // Then define and call a method to handle the successful payment intent.
-      // handlePaymentIntentSucceeded(paymentIntent);
-      response.send({ id: paymentIntent.id, email: paymentIntent.receipt_email });
+    // Handle the event
+    switch (event.type) {
+      case 'checkout_session_completed':
+        const customerEmail = event.data.object.customer_details.email;
         const todayDate = new Date();
         const day = todayDate.getDate();
         const month = todayDate.getMonth() + 2; // Add 1 as months are zero-based
         const year = todayDate.getFullYear();
         const subscriptionDate = `${year}-${month}-${day}`;
-      
-      await updateSubscriptionAccount({
-        email: "cassiorosso@hotmail.com",
-        subscription_date: subscriptionDate
-      });
-      break;
-    case 'payment_method.attached':
-      const paymentMethod = event.data.object;
-      // Then define and call a method to handle the successful attachment of a PaymentMethod.
-      // handlePaymentMethodAttached(paymentMethod);
-      break;
-    // ... handle other event types
-    default:
-      console.log(`Unhandled event type ${event.type}`);
-  }
 
-  // Return a response to acknowledge receipt of the event
-  response.json({received: true});
-});
+        await updateSubscriptionAccount({
+          email: customerEmail,
+          subscription_date: subscriptionDate
+        });
+        break;
+      // ... handle other event types
+      default:
+        console.log(`Unhandled event type ${event.type}`);
+    }
+
+    // Return a response to acknowledge receipt of the event
+    response.json({ received: true });
+  });
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}/`);
