@@ -1,17 +1,10 @@
-// importando os pacotes para uso no arquivo index.js
 const express = require('express');
-
-// crio um servidor express
 const app = express();
-const dotenv = require('dotenv');
-
-dotenv.config();
-
+const PORT = 3000;
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2024-06-20",
 });
 const endpointSecret = process.env.STRIPE_SIGNING_SECRET
-
 const { updateSubscriptionAccount } = require("./hasura.js");
 
 app.use((request, response, next) => {
@@ -72,6 +65,6 @@ app.post(
   response.json({received: true});
 });
 
-
-  // o servidor irá rodar dentro da porta 9000
-app.listen(process.env.PORT, () => console.log('API is up!'));
+app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}/`);
+});
