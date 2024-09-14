@@ -20,7 +20,7 @@ app.get('/', (req, res) => res.send("Stripe Webhook API is up!"));
 
 app.post('/cancel', async (req, res) => {
   //const subscription = await stripe.subscriptions.cancel('{{SUBSCRIPTION_ID}}');
-  res.send(req.body);
+  res.send(req.body.subscription_id);
 }
 );
 
