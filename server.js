@@ -5,8 +5,7 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2024-06-20",
 });
 const endpointSecret = process.env.STRIPE_SIGNING_SECRET
-const { updateSubscriptionAccount } = require("./hasura.js");
-const { cancelSubscriptionAccount } = require("./hasura.js");
+const { updateSubscriptionAccount, cancelSubscriptionAccount  } = require("./hasura.js");
 
 app.use((request, response, next) => {
   if (request.originalUrl === '/webhook') {

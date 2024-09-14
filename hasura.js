@@ -54,5 +54,4 @@ const updateSubscriptionAccount = async (accountInfo) => {
   return await hasuraGql(UPDATE_SUBSCRIPTION_ACCOUNT, accountInfo);
 }
 
-module.exports = { updateSubscriptionAccount };
-module.exports = { cancelSubscriptionAccount };
+module.exports = { updateSubscriptionAccount, cancelSubscriptionAccount };
