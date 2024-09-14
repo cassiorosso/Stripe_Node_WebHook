@@ -28,15 +28,31 @@ const UPDATE_SUBSCRIPTION_ACCOUNT =
 `
 mutation UpdateSubscriptionUser(
   $email: String!,
-  $subscription_date: date!) {
-  update_users(where: {email: {_eq: $email}}, _set: {subscription_date: $subscription_date}) {
+  $subscription_date: date!,
+  $subscription_id: String!) {
+  update_users(where: {email: {_eq: $email}}, _set: {subscription_date: $subscription_date, subscription_id: $subscription_id}) {
     affected_rows
   }
 }
 `
+
+const CANCEL_SUBSCRIPTION_ACCOUNT =
+`
+mutation UpdateSubscriptionUser(
+  $subscription_id: String!) {
+  update_users(where: {subscription_id: {_eq: $subscription_id}}, _set: {subscription_id: ""}) {
+    affected_rows
+  }
+}
+`
+
+const cancelSubscriptionAccount = async (accountInfo) => {
+  return await hasuraGql(CANCEL_SUBSCRIPTION_ACCOUNT, accountInfo);
+}
 
 const updateSubscriptionAccount = async (accountInfo) => {
   return await hasuraGql(UPDATE_SUBSCRIPTION_ACCOUNT, accountInfo);
 }
 
 module.exports = { updateSubscriptionAccount };
+module.exports = { cancelSubscriptionAccount };
