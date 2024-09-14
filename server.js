@@ -8,17 +8,13 @@ const endpointSecret = process.env.STRIPE_SIGNING_SECRET
 const { updateSubscriptionAccount } = require("./hasura.js");
 const { cancelSubscriptionAccount } = require("./hasura.js");
 
-app.use(function(req, res, next) {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET,PUT,PATCH,POST,DELETE");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-  next();
-});
-
 app.use((request, response, next) => {
   if (request.originalUrl === '/webhook') {
     next();
   } else {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET,PUT,PATCH,POST,DELETE");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
     express.json()(request, response, next);
   }
 });
@@ -30,10 +26,10 @@ app.post('/cancel', async (req, res) => {
   try {
     const subscription = await stripe.subscriptions.cancel(customerSubId);
     res.status(200).send(req.body.subscriptionId);
-  } catch(err){
+  } catch (err) {
     res.sendStatus(400);
   }
-  
+
 }
 );
 
