@@ -8,6 +8,13 @@ const endpointSecret = process.env.STRIPE_SIGNING_SECRET
 const { updateSubscriptionAccount } = require("./hasura.js");
 const { cancelSubscriptionAccount } = require("./hasura.js");
 
+app.use(function(req, res, next) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET,PUT,PATCH,POST,DELETE");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+  next();
+});
+
 app.use((request, response, next) => {
   if (request.originalUrl === '/webhook') {
     next();
@@ -19,8 +26,14 @@ app.use((request, response, next) => {
 app.get('/', (req, res) => res.send("Stripe Webhook API is up!"));
 
 app.post('/cancel', async (req, res) => {
-  //const subscription = await stripe.subscriptions.cancel('{{SUBSCRIPTION_ID}}');
-  res.send(req.body.subscription_id);
+  const customerSubId = req.body.subscriptionId;
+  try {
+    //const subscription = await stripe.subscriptions.cancel(customerSubId);
+    res.status(200).send(req.body.subscriptionId);
+  } catch(err){
+    res.sendStatus(400);
+  }
+  
 }
 );
 
@@ -42,7 +55,7 @@ app.post(
 
     // Handle the event
     switch (event.type) {
-      case 'invoice.payment_succeeded': 
+      case 'invoice.payment_succeeded':
         const customerEmail = event.data.object.customer_email;
         const customerSubscription = event.data.object.subscription
         const todayDate = new Date();
@@ -59,11 +72,11 @@ app.post(
         break;
       case 'customer.subscription.deleted':
         const customerId = event.data.object.id;
-          await cancelSubscriptionAccount({
-            subscription_id: customerId
-          });
+        await cancelSubscriptionAccount({
+          subscription_id: customerId
+        });
 
-        break;  
+        break;
       // ... handle other event types
       default:
         console.log(`Unhandled event type ${event.type}`);
