@@ -5,13 +5,17 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2024-06-20",
 });
 const endpointSecret = process.env.STRIPE_SIGNING_SECRET
-const { updateSubscriptionAccount, cancelSubscriptionAccount  } = require("./hasura.js");
+const { updateSubscriptionAccount, cancelSubscriptionAccount } = require("./hasura.js");
 
 app.use((request, response, next) => {
   if (request.originalUrl === '/webhook') {
     next();
   } else {
-    response.header("Access-Control-Allow-Origin", "*");
+    const allowedOrigins = ['https://performancenosestudosapp-production.up.railway.app/', 'http://localhost:3000', 'http://performancenosestudos.com.br/'];
+    const origin = request.headers.origin;
+    if (allowedOrigins.includes(origin)) {
+      response.setHeader('Access-Control-Allow-Origin', origin);
+    }
     response.header("Access-Control-Allow-Methods", "GET,PUT,PATCH,POST,DELETE");
     response.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
     express.json()(request, response, next);
@@ -24,6 +28,7 @@ app.post('/cancel', async (req, res) => {
   const customerSubId = req.body.subscriptionId;
   try {
     const subscription = await stripe.subscriptions.cancel(customerSubId);
+    console.log(subscription)
     res.status(200).send(req.body.subscriptionId);
   } catch (err) {
     res.sendStatus(400);
