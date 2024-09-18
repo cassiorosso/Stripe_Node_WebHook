@@ -11,7 +11,8 @@ app.use((request, response, next) => {
   if (request.originalUrl === '/webhook') {
     next();
   } else {
-    const allowedOrigins = ['https://performancenosestudosapp-production.up.railway.app/', 'http://localhost:3000', 'http://performancenosestudos.com.br/'];
+    //'http://localhost:3000'
+    const allowedOrigins = ['https://performancenosestudosapp-production.up.railway.app/','https://performancenosestudos.com.br/'];
     const origin = request.headers.origin;
     if (allowedOrigins.includes(origin)) {
       response.setHeader('Access-Control-Allow-Origin', origin);
@@ -28,7 +29,6 @@ app.post('/cancel', async (req, res) => {
   const customerSubId = req.body.subscriptionId;
   try {
     const subscription = await stripe.subscriptions.cancel(customerSubId);
-    console.log(subscription)
     res.status(200).send(req.body.subscriptionId);
   } catch (err) {
     res.sendStatus(400);
@@ -39,7 +39,6 @@ app.post('/cancel', async (req, res) => {
 
 app.post(
   '/webhook',
-  // Stripe requires the raw body to construct the event
   express.raw({ type: 'application/json' }),
   async (request, response) => {
     const sig = request.headers['stripe-signature'];
@@ -59,7 +58,7 @@ app.post(
         const customerEmail = event.data.object.customer_email;
         const customerSubscription = event.data.object.subscription
         const todayDate = new Date();
-        const day = todayDate.getDate();
+        const day = todayDate.getDate() + 1;
         const month = todayDate.getMonth() + 2; // Add 1 as months are zero-based
         const year = todayDate.getFullYear();
         const subscriptionDate = `${year}-${month}-${day}`;
