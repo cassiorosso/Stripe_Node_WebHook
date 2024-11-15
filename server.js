@@ -12,7 +12,7 @@ app.use((request, response, next) => {
     next();
   } else {
     //'http://localhost:3000'
-    const allowedOrigins = ['https://performancenosestudosapp-production.up.railway.app/','https://performancenosestudos.com.br/'];
+    const allowedOrigins = ['https://performancenosestudosapp-production.up.railway.app/','https://performancenosestudos.com.br/','https://www.performancenosestudos.com.br/'];
     const origin = request.headers.origin;
     if (allowedOrigins.includes(origin)) {
       response.setHeader('Access-Control-Allow-Origin', origin);
