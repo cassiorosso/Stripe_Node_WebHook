@@ -12,7 +12,7 @@ app.use((request, response, next) => {
     next();
   } else {
     //'http://localhost:3000'
-    const allowedOrigins = ['https://performancenosestudosapp-production.up.railway.app/','https://performancenosestudos.com.br/','https://www.performancenosestudos.com.br/'];
+    const allowedOrigins = ['https://performancenosestudosapp-production.up.railway.app/', 'https://performancenosestudos.com.br/', 'https://www.performancenosestudos.com.br/'];
     const origin = request.headers.origin;
     if (allowedOrigins.includes(origin)) {
       response.setHeader('Access-Control-Allow-Origin', origin);
@@ -28,7 +28,9 @@ app.get('/', (req, res) => res.send("Stripe Webhook API is up!"));
 app.post('/cancel', async (req, res) => {
   const customerSubId = req.body.subscriptionId;
   try {
-    const subscription = await stripe.subscriptions.cancel(customerSubId);
+    const subscription = await stripe.subscriptions.update(customerSubId, {
+      cancel_at_period_end: true
+    });
     res.status(200).send(req.body.subscriptionId);
   } catch (err) {
     res.sendStatus(400);
