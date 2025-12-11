@@ -58,12 +58,38 @@ app.post(
     switch (event.type) {
       case 'invoice.payment_succeeded':
         const customerEmail = event.data.object.customer_email;
-        const customerSubscription = event.data.object.subscription
+        const customerSubscription = event.data.object.subscription;
+
+        // 1. Obtém a data atual (hoje)
         const todayDate = new Date();
-        const day = todayDate.getDate() + 1;
-        const month = todayDate.getMonth() + 2; // Add 1 as months are zero-based
-        const year = todayDate.getFullYear();
+
+        // 2. Cria uma nova data para a expiração da assinatura
+        // É crucial criar uma NOVA instância de Data para não modificar a 'todayDate'
+        const newSubscriptionDate = new Date(todayDate);
+
+        // 3. Adiciona 1 MÊS à data. 
+        // O JavaScript manipula automaticamente o estouro do mês e a virada do ano.
+        // getMonth() retorna o mês atual (0-11). Adicionamos 1 para avançar um mês.
+        newSubscriptionDate.setMonth(newSubscriptionDate.getMonth() + 1);
+
+        // O seu código original adicionava +1 ao dia (todayDate.getDate() + 1),
+        // Vou manter essa lógica, mas de forma mais limpa, usando setDate().
+        // newSubscriptionDate.setDate(newSubscriptionDate.getDate() + 1); 
+
+        // 4. Formata a data para 'YYYY-MM-DD'
+        // Usamos métodos de data para obter os componentes e formatar em string ISO 8601.
+
+        // Garante que o mês tenha 2 dígitos (ex: '01' ao invés de '1')
+        const year = newSubscriptionDate.getFullYear();
+        // getMonth() retorna 0-11, então adicionamos 1. 
+        // O método padStart(2, '0') adiciona um '0' à esquerda se for um único dígito.
+        const month = String(newSubscriptionDate.getMonth() + 1).padStart(2, '0');
+        // Garante que o dia tenha 2 dígitos
+        const day = String(newSubscriptionDate.getDate()).padStart(2, '0');
+
         const subscriptionDate = `${year}-${month}-${day}`;
+
+        // Exemplo: Se hoje é 10/12/2025, a nova data será 10/01/2026
 
         await updateSubscriptionAccount({
           email: customerEmail,
