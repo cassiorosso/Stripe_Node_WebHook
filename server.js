@@ -1,117 +1,202 @@
 const express = require('express');
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2024-06-20",
+  apiVersion: "2025-11-17.clover",
 });
-const endpointSecret = process.env.STRIPE_SIGNING_SECRET
+
+const endpointSecret = process.env.STRIPE_SIGNING_SECRET;
 const { updateSubscriptionAccount, cancelSubscriptionAccount } = require("./hasura.js");
 
-app.use((request, response, next) => {
-  if (request.originalUrl === '/webhook') {
-    next();
-  } else {
-    //'http://localhost:3000'
-    const allowedOrigins = ['https://performancenosestudosapp-production.up.railway.app/', 'https://performancenosestudos.com.br/', 'https://www.performancenosestudos.com.br/'];
-    const origin = request.headers.origin;
-    if (allowedOrigins.includes(origin)) {
-      response.setHeader('Access-Control-Allow-Origin', origin);
-    }
-    response.header("Access-Control-Allow-Methods", "GET,PUT,PATCH,POST,DELETE");
-    response.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-    express.json()(request, response, next);
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                     */
+/* -------------------------------------------------------------------------- */
+
+function toYyyyMmDdUTC(dateObj) {
+  const y = dateObj.getUTCFullYear();
+  const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function yesterdayUTC() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d;
+}
+
+async function getCustomerEmailFromInvoice(invoice) {
+  let email = invoice.customer_email;
+  const customerId = invoice.customer;
+
+  if (!email && customerId) {
+    const customer = await stripe.customers.retrieve(customerId);
+    email = customer?.email;
   }
+  return email || null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Body parsing (JSON em tudo, EXCETO /webhook)                                */
+/* -------------------------------------------------------------------------- */
+
+app.use((req, res, next) => {
+  if (req.originalUrl === '/webhook') return next();
+  return express.json()(req, res, next);
 });
+
+/* -------------------------------------------------------------------------- */
+/* CORS                                                                        */
+/* -------------------------------------------------------------------------- */
+
+app.use((req, res, next) => {
+  if (req.originalUrl === '/webhook') return next();
+
+  const allowedOrigins = [
+    'https://performancenosestudosapp-production.up.railway.app',
+    'https://performancenosestudos.com.br',
+    'https://www.performancenosestudos.com.br'
+  ];
+
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+
+  res.header("Access-Control-Allow-Methods", "GET,PUT,PATCH,POST,DELETE,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+/* -------------------------------------------------------------------------- */
 
 app.get('/', (req, res) => res.send("Stripe Webhook API is up!"));
 
-app.post('/cancel', async (req, res) => {
-  const customerSubId = req.body.subscriptionId;
-  try {
-    const subscription = await stripe.subscriptions.update(customerSubId, {
-      cancel_at_period_end: true
-    });
-    res.status(200).send(req.body.subscriptionId);
-  } catch (err) {
-    res.sendStatus(400);
-  }
-
-}
-);
+/* -------------------------------------------------------------------------- */
+/* Webhook                                                                     */
+/* -------------------------------------------------------------------------- */
 
 app.post(
   '/webhook',
   express.raw({ type: 'application/json' }),
-  async (request, response) => {
-    const sig = request.headers['stripe-signature'];
+  async (req, res) => {
+    const sig = req.headers['stripe-signature'];
 
     let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+      console.error('Webhook signature error:', err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
 
     try {
-      event = stripe.webhooks.constructEvent(request.body, sig, endpointSecret);
+      switch (event.type) {
+
+        /* ---------------- Ativação da assinatura ---------------- */
+        case 'invoice.payment_succeeded': {
+          const invoice = event.data.object;
+
+          // Só no primeiro pagamento da assinatura
+          if (invoice.billing_reason !== 'subscription_create') break;
+
+          const subscriptionId = invoice.subscription;
+          const line = invoice.lines?.data?.find(l => l.price?.recurring) || invoice.lines?.data?.[0];
+          const priceId = line?.price?.id;
+
+          if (!priceId || !subscriptionId) break;
+
+          const PRICE_TO_MONTHS = {
+            [process.env.PRICE_MENSAL]: 1,
+            [process.env.PRICE_SEMESTRAL]: 6,
+            [process.env.PRICE_ANUAL]: 12,
+          };
+
+          const monthsToAdd = PRICE_TO_MONTHS[priceId];
+          if (!monthsToAdd) break;
+
+          const customerEmail = await getCustomerEmailFromInvoice(invoice);
+          if (!customerEmail) break;
+
+          const paidAt = invoice.status_transitions?.paid_at;
+          const startDate = paidAt ? new Date(paidAt * 1000) : new Date();
+
+          const endDate = new Date(startDate);
+          endDate.setUTCMonth(endDate.getUTCMonth() + monthsToAdd);
+
+          const cancelAt = Math.floor(endDate.getTime() / 1000);
+          await stripe.subscriptions.update(subscriptionId, {
+            cancel_at: cancelAt,
+            cancel_at_period_end: false,
+          });
+
+          await updateSubscriptionAccount({
+            email: customerEmail,
+            subscription_date: toYyyyMmDdUTC(endDate),
+            subscription_id: subscriptionId
+          });
+
+          break;
+        }
+
+        /* ---------------- Falha de pagamento ---------------- */
+        case 'invoice.payment_failed': {
+          const invoice = event.data.object;
+          const customerEmail = await getCustomerEmailFromInvoice(invoice);
+          if (!customerEmail) break;
+
+          await updateSubscriptionAccount({
+            email: customerEmail,
+            subscription_date: toYyyyMmDdUTC(yesterdayUTC()),
+            subscription_id: invoice.subscription || ""
+          });
+
+          break;
+        }
+
+        /* ---------------- Falha ao finalizar invoice ---------------- */
+        case 'invoice.finalization_failed': {
+          const invoice = event.data.object;
+          const customerEmail = await getCustomerEmailFromInvoice(invoice);
+          if (!customerEmail) break;
+
+          await updateSubscriptionAccount({
+            email: customerEmail,
+            subscription_date: toYyyyMmDdUTC(yesterdayUTC()),
+            subscription_id: invoice.subscription || ""
+          });
+
+          break;
+        }
+
+        /* ---------------- Cancelamento da assinatura ---------------- */
+        case 'customer.subscription.deleted': {
+          const subscriptionId = event.data.object.id;
+
+          await cancelSubscriptionAccount({
+            subscription_id: subscriptionId,
+            subscription_date: toYyyyMmDdUTC(yesterdayUTC())
+          });
+
+          break;
+        }
+
+        default:
+          console.log(`Unhandled event type ${event.type}`);
+      }
+
+      return res.json({ received: true });
+    } catch (err) {
+      console.error('Webhook handler error:', err);
+      return res.status(500).json({ error: 'Webhook handler failed' });
     }
-    catch (err) {
-      response.status(400).send(`Webhook Error: ${err.message}`);
-    }
+  }
+);
 
-    // Handle the event
-    switch (event.type) {
-      case 'invoice.payment_succeeded':
-        const customerEmail = event.data.object.customer_email;
-        const customerSubscription = event.data.object.subscription;
-
-        // 1. Obtém a data atual (hoje)
-        const todayDate = new Date();
-
-        // 2. Cria uma nova data para a expiração da assinatura
-        // É crucial criar uma NOVA instância de Data para não modificar a 'todayDate'
-        const newSubscriptionDate = new Date(todayDate);
-
-        // 3. Adiciona 1 MÊS à data. 
-        // O JavaScript manipula automaticamente o estouro do mês e a virada do ano.
-        // getMonth() retorna o mês atual (0-11). Adicionamos 1 para avançar um mês.
-        newSubscriptionDate.setMonth(newSubscriptionDate.getMonth() + 1);
-
-        // O seu código original adicionava +1 ao dia (todayDate.getDate() + 1),
-        // Vou manter essa lógica, mas de forma mais limpa, usando setDate().
-        // newSubscriptionDate.setDate(newSubscriptionDate.getDate() + 1); 
-
-        // 4. Formata a data para 'YYYY-MM-DD'
-        // Usamos métodos de data para obter os componentes e formatar em string ISO 8601.
-
-        // Garante que o mês tenha 2 dígitos (ex: '01' ao invés de '1')
-        const year = newSubscriptionDate.getFullYear();
-        // getMonth() retorna 0-11, então adicionamos 1. 
-        // O método padStart(2, '0') adiciona um '0' à esquerda se for um único dígito.
-        const month = String(newSubscriptionDate.getMonth() + 1).padStart(2, '0');
-        // Garante que o dia tenha 2 dígitos
-        const day = String(newSubscriptionDate.getDate()).padStart(2, '0');
-
-        const subscriptionDate = `${year}-${month}-${day}`;
-
-        // Exemplo: Se hoje é 10/12/2025, a nova data será 10/01/2026
-
-        await updateSubscriptionAccount({
-          email: customerEmail,
-          subscription_date: subscriptionDate,
-          subscription_id: customerSubscription
-        });
-        break;
-      case 'customer.subscription.deleted':
-        const customerId = event.data.object.id;
-        await cancelSubscriptionAccount({
-          subscription_id: customerId
-        });
-
-        break;
-      // ... handle other event types
-      default:
-        console.log(`Unhandled event type ${event.type}`);
-    }
-
-    // Return a response to acknowledge receipt of the event
-    response.json({ received: true });
-  });
+/* -------------------------------------------------------------------------- */
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}/`);
