@@ -3,7 +3,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2025-11-17.clover",
+  apiVersion: "2024-06-20",
 });
 
 const endpointSecret = process.env.STRIPE_SIGNING_SECRET;
@@ -180,7 +180,6 @@ app.post(
           const cancelAt = Math.floor(endDate.getTime() / 1000);
           await stripe.subscriptions.update(subscriptionId, {
             cancel_at: cancelAt,
-            cancel_at_period_end: false,
           });
 
           await updateSubscriptionAccount({
