@@ -98,49 +98,49 @@ app.post(
 
         /* ---------------- Ativação da assinatura ---------------- */
         case 'invoice.payment_succeeded': {
-          const invoice = event.data.object;
+          // Dentro do seu case 'invoice.payment_succeeded'
+          const invoice = event.data.object; // O objeto invoice propriamente dito
 
-          // 1. Evite processar invoices que não são de assinaturas (ex: vendas avulsas)
-          if (!invoice.subscription) break;
+          // 1. Verificação de Identidade da Fatura
+          if (invoice.billing_reason === 'subscription_create') {
 
-          // 2. Pegar os metadados ou linhas de forma segura
-          const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
-          const priceId = subscription.items.data[0].price.id;
+            const subscriptionId = invoice.subscription;
 
-          const PRICE_TO_MONTHS = {
-            [process.env.PRICE_MENSAL]: 1,
-            [process.env.PRICE_SEMESTRAL]: 6,
-            [process.env.PRICE_ANUAL]: 12,
-          };
+            // IMPORTANTE: Use as linhas da fatura para identificar o plano
+            const lineItem = invoice.lines.data[0];
+            const priceId = lineItem.price.id;
 
-          const monthsToAdd = PRICE_TO_MONTHS[priceId];
-          if (!monthsToAdd) {
-            console.error(`PriceId ${priceId} não mapeado no PRICE_TO_MONTHS`);
-            break;
+            const PRICE_TO_MONTHS = {
+              [process.env.PRICE_MENSAL]: 1,
+              [process.env.PRICE_SEMESTRAL]: 6,
+              [process.env.PRICE_ANUAL]: 12,
+            };
+
+            const monthsToAdd = PRICE_TO_MONTHS[priceId];
+
+            if (monthsToAdd && subscriptionId) {
+              // 2. BUSQUE A ASSINATURA ATUALIZADA
+              // Fazemos isso para pegar o 'current_period_end' exato que o Stripe gerou
+              const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+              // 3. CONFIGURA O CANCELAMENTO AUTOMÁTICO
+              // Isso transforma a assinatura em um "pacote" que expira sozinho
+              await stripe.subscriptions.update(subscriptionId, {
+                cancel_at_period_end: true,
+              });
+
+              // 4. ATUALIZA SEU BANCO DE DADOS
+              const expirationDate = new Date(subscription.current_period_end * 1000);
+
+              await updateSubscriptionAccount({
+                email: invoice.customer_email, // O invoice traz o email diretamente aqui
+                subscription_date: toYyyyMmDdUTC(expirationDate),
+                subscription_id: subscriptionId
+              });
+
+              console.log(`Sucesso: Assinatura ${subscriptionId} configurada para expirar em ${expirationDate}`);
+            }
           }
-
-          // 3. Email do cliente (Priorize o email do cliente do Stripe)
-          const customerEmail = invoice.customer_email || (await stripe.customers.retrieve(invoice.customer)).email;
-
-          // 4. Calcular o término baseado no período atual do Stripe
-          // O Stripe trabalha com timestamps (segundos). 
-          // subscription.current_period_end já é o fim do ciclo pago.
-          const endDateUnix = subscription.current_period_end;
-          const endDateJS = new Date(endDateUnix * 1000);
-
-          // 5. Se você quer que a assinatura NÃO renove automaticamente:
-          // Em vez de calcular cancel_at, você pode simplesmente usar:
-          await stripe.subscriptions.update(invoice.subscription, {
-            cancel_at_period_end: true,
-          });
-
-          // 6. Atualizar seu banco de dados
-          await updateSubscriptionAccount({
-            email: customerEmail,
-            subscription_date: toYyyyMmDdUTC(endDateJS),
-            subscription_id: invoice.subscription
-          });
-
           break;
         }
 
