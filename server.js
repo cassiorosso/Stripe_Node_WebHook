@@ -98,51 +98,85 @@ app.post(
 
         /* ---------------- Ativação da assinatura ---------------- */
         case 'invoice.payment_succeeded': {
-          // Dentro do seu case 'invoice.payment_succeeded'
-          const invoice = event.data.object; // O objeto invoice propriamente dito
+          const invoice = event.data.object;
 
-          // 1. Verificação de Identidade da Fatura
-          if (invoice.billing_reason === 'subscription_create') {
+          // Só processa a 1ª cobrança da assinatura
+          if (invoice.billing_reason !== 'subscription_create') break;
 
-            const subscriptionId = invoice.subscription;
-
-            // IMPORTANTE: Use as linhas da fatura para identificar o plano
-            const lineItem = invoice.lines.data[0];
-            const priceId = lineItem.price.id;
-
-            const PRICE_TO_MONTHS = {
-              [process.env.PRICE_MENSAL]: 1,
-              [process.env.PRICE_SEMESTRAL]: 6,
-              [process.env.PRICE_ANUAL]: 12,
-            };
-
-            const monthsToAdd = PRICE_TO_MONTHS[priceId];
-
-            if (monthsToAdd && subscriptionId) {
-              // 2. BUSQUE A ASSINATURA ATUALIZADA
-              // Fazemos isso para pegar o 'current_period_end' exato que o Stripe gerou
-              const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-
-              // 3. CONFIGURA O CANCELAMENTO AUTOMÁTICO
-              // Isso transforma a assinatura em um "pacote" que expira sozinho
-              await stripe.subscriptions.update(subscriptionId, {
-                cancel_at_period_end: true,
-              });
-
-              // 4. ATUALIZA SEU BANCO DE DADOS
-              const expirationDate = new Date(subscription.current_period_end * 1000);
-
-              await updateSubscriptionAccount({
-                email: invoice.customer_email, // O invoice traz o email diretamente aqui
-                subscription_date: toYyyyMmDdUTC(expirationDate),
-                subscription_id: subscriptionId
-              });
-
-              console.log(`Sucesso: Assinatura ${subscriptionId} configurada para expirar em ${expirationDate}`);
-            }
+          const subscriptionId = invoice.subscription;
+          if (!subscriptionId) {
+            console.log('invoice.payment_succeeded sem subscriptionId. invoice:', invoice.id);
+            break;
           }
+
+          // Pegue o line item (o seu payload mostra que period.end existe aqui)
+          const lineItem = invoice.lines?.data?.[0];
+          const priceId = lineItem?.price?.id;
+
+          // (opcional) validar priceId se quiser
+          const PRICE_TO_MONTHS = {
+            [process.env.PRICE_MENSAL]: 1,
+            [process.env.PRICE_SEMESTRAL]: 6,
+            [process.env.PRICE_ANUAL]: 12,
+          };
+
+          if (priceId && !PRICE_TO_MONTHS[priceId]) {
+            console.log('PriceId não mapeado:', priceId, 'invoice:', invoice.id);
+            // break; // se quiser bloquear planos desconhecidos
+          }
+
+          // Email robusto
+          const customerEmail = await getCustomerEmailFromInvoice(invoice);
+          if (!customerEmail) {
+            console.log('Não consegui identificar email do customer. invoice:', invoice.id);
+            break;
+          }
+
+          // ✅ AQUI está o ponto-chave: use o period.end da invoice
+          const periodEnd = lineItem?.period?.end;
+
+          if (!periodEnd || typeof periodEnd !== 'number') {
+            console.log('invoice lineItem.period.end inválido:', periodEnd, 'invoice:', invoice.id);
+            break;
+          }
+
+          // Configura para cancelar no final do período
+          await stripe.subscriptions.update(subscriptionId, {
+            cancel_at_period_end: true,
+          });
+
+          const expirationDate = new Date(periodEnd * 1000);
+          const subscriptionDate = toYyyyMmDdUTC(expirationDate);
+
+          if (!subscriptionDate) {
+            console.log('subscriptionDate inválida. expirationDate:', expirationDate, 'periodEnd:', periodEnd);
+            break;
+          }
+
+          await updateSubscriptionAccount({
+            email: customerEmail,
+            subscription_date: subscriptionDate,
+            subscription_id: subscriptionId
+          });
+
+          console.log(`✅ Assinatura ${subscriptionId} expira em ${subscriptionDate} (UTC)`);
           break;
         }
+
+        case 'customer.subscription.updated': {
+          const sub = event.data.object;
+
+          if (sub.status === 'canceled' || sub.status === 'unpaid') {
+            await cancelSubscriptionAccount({
+              subscription_id: sub.id,
+              subscription_date: toYyyyMmDdUTC(yesterdayUTC()),
+            });
+          }
+
+          break;
+        }
+
+
 
         /* ---------------- Falha de pagamento ---------------- */
         case 'invoice.payment_failed': {
