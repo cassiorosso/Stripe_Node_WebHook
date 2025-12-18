@@ -13,7 +13,12 @@ const { updateSubscriptionAccount, cancelSubscriptionAccount } = require("./hasu
 /* Helpers                                                                     */
 /* -------------------------------------------------------------------------- */
 
+function isValidDate(d) {
+  return d instanceof Date && !Number.isNaN(d.getTime());
+}
+
 function toYyyyMmDdUTC(dateObj) {
+  if (!isValidDate(dateObj)) return null;
   const y = dateObj.getUTCFullYear();
   const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
   const d = String(dateObj.getUTCDate()).padStart(2, '0');
@@ -24,6 +29,25 @@ function yesterdayUTC() {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - 1);
   return d;
+}
+
+// soma meses em UTC preservando o "dia" (com correção de final de mês)
+function addMonthsUTC(dateObj, months) {
+  const base = new Date(Date.UTC(
+    dateObj.getUTCFullYear(),
+    dateObj.getUTCMonth(),
+    dateObj.getUTCDate(),
+    0, 0, 0
+  ));
+
+  const originalDay = base.getUTCDate();
+  base.setUTCMonth(base.getUTCMonth() + months);
+
+  // Se estourou para o mês seguinte (ex: 31 -> mês com 30), volta para o último dia do mês correto
+  if (base.getUTCDate() !== originalDay) {
+    base.setUTCDate(0);
+  }
+  return base;
 }
 
 async function getCustomerEmailFromInvoice(invoice) {
@@ -73,7 +97,7 @@ app.use((req, res, next) => {
 
 /* -------------------------------------------------------------------------- */
 
-app.get('/', (req, res) => res.send("Stripe Webhook API is up - 2025-11-17.clover"));
+app.get('/', (req, res) => res.send("Stripe Webhook API is up - 2024-06-20"));
 
 /* -------------------------------------------------------------------------- */
 /* Webhook                                                                     */
@@ -109,20 +133,25 @@ app.post(
             break;
           }
 
-          // Pegue o line item (o seu payload mostra que period.end existe aqui)
+          // line item para identificar o price
           const lineItem = invoice.lines?.data?.[0];
           const priceId = lineItem?.price?.id;
 
-          // (opcional) validar priceId se quiser
+          if (!priceId) {
+            console.log('invoice.payment_succeeded sem priceId. invoice:', invoice.id);
+            break;
+          }
+
           const PRICE_TO_MONTHS = {
             [process.env.PRICE_MENSAL]: 1,
             [process.env.PRICE_SEMESTRAL]: 6,
             [process.env.PRICE_ANUAL]: 12,
           };
 
-          if (priceId && !PRICE_TO_MONTHS[priceId]) {
+          const monthsToAdd = PRICE_TO_MONTHS[priceId];
+          if (!monthsToAdd) {
             console.log('PriceId não mapeado:', priceId, 'invoice:', invoice.id);
-            // break; // se quiser bloquear planos desconhecidos
+            break;
           }
 
           // Email robusto
@@ -132,26 +161,27 @@ app.post(
             break;
           }
 
-          // ✅ AQUI está o ponto-chave: use o period.end da invoice
-          const periodEnd = lineItem?.period?.end;
+          // Data base: quando foi pago (unix seconds)
+          const paidAt = invoice.status_transitions?.paid_at;
+          const startDate = paidAt
+            ? new Date(paidAt * 1000)
+            : new Date((lineItem?.period?.start || invoice.created) * 1000);
 
-          if (!periodEnd || typeof periodEnd !== 'number') {
-            console.log('invoice lineItem.period.end inválido:', periodEnd, 'invoice:', invoice.id);
-            break;
-          }
-
-          // Configura para cancelar no final do período
-          await stripe.subscriptions.update(subscriptionId, {
-            cancel_at_period_end: true,
-          });
-
-          const expirationDate = new Date(periodEnd * 1000);
-          const subscriptionDate = toYyyyMmDdUTC(expirationDate);
+          // ✅ Data final do CONTRATO (1/6/12 meses)
+          const endDate = addMonthsUTC(startDate, monthsToAdd);
+          const subscriptionDate = toYyyyMmDdUTC(endDate);
 
           if (!subscriptionDate) {
-            console.log('subscriptionDate inválida. expirationDate:', expirationDate, 'periodEnd:', periodEnd);
+            console.log('subscriptionDate inválida. endDate:', endDate, 'invoice:', invoice.id);
             break;
           }
+
+          // ✅ Cancela automaticamente no final do contrato
+          const cancelAt = Math.floor(endDate.getTime() / 1000);
+          await stripe.subscriptions.update(subscriptionId, {
+            cancel_at: cancelAt,
+            cancel_at_period_end: false,
+          });
 
           await updateSubscriptionAccount({
             email: customerEmail,
@@ -159,10 +189,11 @@ app.post(
             subscription_id: subscriptionId
           });
 
-          console.log(`✅ Assinatura ${subscriptionId} expira em ${subscriptionDate} (UTC)`);
+          console.log(`✅ ${subscriptionId} (${priceId}) expira em ${subscriptionDate} (UTC)`);
           break;
         }
 
+        /* ---------------- Rede de segurança: status mudou ---------------- */
         case 'customer.subscription.updated': {
           const sub = event.data.object;
 
@@ -172,11 +203,8 @@ app.post(
               subscription_date: toYyyyMmDdUTC(yesterdayUTC()),
             });
           }
-
           break;
         }
-
-
 
         /* ---------------- Falha de pagamento ---------------- */
         case 'invoice.payment_failed': {
@@ -184,9 +212,12 @@ app.post(
           const customerEmail = await getCustomerEmailFromInvoice(invoice);
           if (!customerEmail) break;
 
+          const expired = toYyyyMmDdUTC(yesterdayUTC());
+          if (!expired) break;
+
           await updateSubscriptionAccount({
             email: customerEmail,
-            subscription_date: toYyyyMmDdUTC(yesterdayUTC()),
+            subscription_date: expired,
             subscription_id: invoice.subscription || ""
           });
 
@@ -199,9 +230,12 @@ app.post(
           const customerEmail = await getCustomerEmailFromInvoice(invoice);
           if (!customerEmail) break;
 
+          const expired = toYyyyMmDdUTC(yesterdayUTC());
+          if (!expired) break;
+
           await updateSubscriptionAccount({
             email: customerEmail,
-            subscription_date: toYyyyMmDdUTC(yesterdayUTC()),
+            subscription_date: expired,
             subscription_id: invoice.subscription || ""
           });
 
@@ -212,9 +246,12 @@ app.post(
         case 'customer.subscription.deleted': {
           const subscriptionId = event.data.object.id;
 
+          const expired = toYyyyMmDdUTC(yesterdayUTC());
+          if (!expired) break;
+
           await cancelSubscriptionAccount({
             subscription_id: subscriptionId,
-            subscription_date: toYyyyMmDdUTC(yesterdayUTC())
+            subscription_date: expired
           });
 
           break;
