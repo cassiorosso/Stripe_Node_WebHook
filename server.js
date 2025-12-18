@@ -100,14 +100,12 @@ app.post(
         case 'invoice.payment_succeeded': {
           const invoice = event.data.object;
 
-          // Só no primeiro pagamento da assinatura
-          if (invoice.billing_reason !== 'subscription_create') break;
+          // 1. Evite processar invoices que não são de assinaturas (ex: vendas avulsas)
+          if (!invoice.subscription) break;
 
-          const subscriptionId = invoice.subscription;
-          const line = invoice.lines?.data?.find(l => l.price?.recurring) || invoice.lines?.data?.[0];
-          const priceId = line?.price?.id;
-
-          if (!priceId || !subscriptionId) break;
+          // 2. Pegar os metadados ou linhas de forma segura
+          const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+          const priceId = subscription.items.data[0].price.id;
 
           const PRICE_TO_MONTHS = {
             [process.env.PRICE_MENSAL]: 1,
@@ -116,27 +114,31 @@ app.post(
           };
 
           const monthsToAdd = PRICE_TO_MONTHS[priceId];
-          if (!monthsToAdd) break;
+          if (!monthsToAdd) {
+            console.error(`PriceId ${priceId} não mapeado no PRICE_TO_MONTHS`);
+            break;
+          }
 
-          const customerEmail = await getCustomerEmailFromInvoice(invoice);
-          if (!customerEmail) break;
+          // 3. Email do cliente (Priorize o email do cliente do Stripe)
+          const customerEmail = invoice.customer_email || (await stripe.customers.retrieve(invoice.customer)).email;
 
-          const paidAt = invoice.status_transitions?.paid_at;
-          const startDate = paidAt ? new Date(paidAt * 1000) : new Date();
+          // 4. Calcular o término baseado no período atual do Stripe
+          // O Stripe trabalha com timestamps (segundos). 
+          // subscription.current_period_end já é o fim do ciclo pago.
+          const endDateUnix = subscription.current_period_end;
+          const endDateJS = new Date(endDateUnix * 1000);
 
-          const endDate = new Date(startDate);
-          endDate.setUTCMonth(endDate.getUTCMonth() + monthsToAdd);
-
-          const cancelAt = Math.floor(endDate.getTime() / 1000);
-          await stripe.subscriptions.update(subscriptionId, {
-            cancel_at: cancelAt,
-            cancel_at_period_end: false,
+          // 5. Se você quer que a assinatura NÃO renove automaticamente:
+          // Em vez de calcular cancel_at, você pode simplesmente usar:
+          await stripe.subscriptions.update(invoice.subscription, {
+            cancel_at_period_end: true,
           });
 
+          // 6. Atualizar seu banco de dados
           await updateSubscriptionAccount({
             email: customerEmail,
-            subscription_date: toYyyyMmDdUTC(endDate),
-            subscription_id: subscriptionId
+            subscription_date: toYyyyMmDdUTC(endDateJS),
+            subscription_id: invoice.subscription
           });
 
           break;
