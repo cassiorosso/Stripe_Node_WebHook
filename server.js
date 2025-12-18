@@ -73,7 +73,7 @@ app.use((req, res, next) => {
 
 /* -------------------------------------------------------------------------- */
 
-app.get('/', (req, res) => res.send("Stripe Webhook API is up!"));
+app.get('/', (req, res) => res.send("Stripe Webhook API is up - 2025-11-17.clover"));
 
 /* -------------------------------------------------------------------------- */
 /* Webhook                                                                     */
